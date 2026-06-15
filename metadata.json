@@ -1,0 +1,6 @@
+{
+  "name": "Multi-Org Budget Tracker",
+  "description": "An isolated, collaborative budget tracker for multiple independent organizations with custom branding, member roles, and real-time transaction tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

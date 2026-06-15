@@ -1,0 +1,174 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny-all catch-all (Pillar 8 & Global Safety Net)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Core Primitives & Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Standard verification checks for Google OR password auth providers
+    function isVerified() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true || 
+        request.auth.token.firebase.sign_in_provider == 'password'
+      );
+    }
+
+    // Check if user is a member of the organization (Master Gate pattern)
+    function isOrgMember(orgId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid));
+    }
+
+    // Check if user is an admin of the organization (Tiered Identity logic)
+    function isOrgAdmin(orgId) {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // --- Entity Validation Blueprints (Anti-Update-Gap) ---
+
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+        data.email is string && data.email.size() <= 256 &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128)) &&
+        (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1024)) &&
+        (!('theme' in data) || (data.theme is string && data.theme.size() <= 32)) &&
+        (!('bannerColor' in data) || (data.bannerColor is string && data.bannerColor.size() <= 32)) &&
+        (!('bio' in data) || (data.bio is string && data.bio.size() <= 500));
+    }
+
+    function isValidOrganization(data) {
+      return data.id is string && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 128 &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 1000)) &&
+        (!('logoUrl' in data) || (data.logoUrl is string && data.logoUrl.size() <= 1024)) &&
+        data.colorTheme is string && data.colorTheme.size() <= 32 &&
+        (!('type' in data) || (data.type in ['personal', 'team'])) &&
+        data.createdBy == request.auth.uid;
+    }
+
+    function isValidMember(data) {
+      return data.userId is string && data.userId.size() <= 128 && (data.userId == '' || data.userId.matches('^[a-zA-Z0-9_\\-]+$')) &&
+        data.email is string && data.email.size() <= 256 &&
+        data.role in ['admin', 'member'] &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128));
+    }
+
+    function isValidTransaction(data) {
+      return data.id is string && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 128 &&
+        data.amount is number && data.amount >= 0 && data.amount <= 1000000000 &&
+        data.type in ['income', 'expense'] &&
+        data.category is string && data.category.size() <= 64 &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 1000)) &&
+        data.createdBy == request.auth.uid &&
+        (!('createdByName' in data) || (data.createdByName is string && data.createdByName.size() <= 128));
+    }
+
+    function isValidNotification(data) {
+      return data.id is string && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.type in ['budget_change', 'invite', 'info'] &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 128 &&
+        data.message is string && data.message.size() <= 1000 &&
+        data.orgId is string && data.orgId.size() <= 128 &&
+        (!('orgName' in data) || (data.orgName is string && data.orgName.size() <= 128)) &&
+        (!('invitedByEmail' in data) || (data.invitedByEmail is string && data.invitedByEmail.size() <= 256)) &&
+        (!('invitedByName' in data) || (data.invitedByName is string && data.invitedByName.size() <= 128)) &&
+        (!('inviteRole' in data) || (data.inviteRole is string && data.inviteRole.size() <= 32)) &&
+        data.status in ['unread', 'read', 'accepted', 'declined'];
+    }
+
+    // --- Users Collection ---
+    match /users/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isVerified() && isValidId(userId) && userId == request.auth.uid && isValidUser(incoming());
+      allow update: if isVerified() && isValidId(userId) && userId == request.auth.uid && isValidUser(incoming()) && 
+                    incoming().uid == existing().uid && incoming().email == existing().email;
+      allow delete: if false;
+    }
+
+    // --- Notifications Subcollection ---
+    match /users/{userId}/notifications/{notificationId} {
+      allow read, update, delete: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && isValidId(userId) && isValidId(notificationId) && isValidNotification(incoming()) &&
+                    incoming().createdAt is string && incoming().createdAt.size() <= 64;
+    }
+
+    // --- Organizations Collection ---
+    match /organizations/{organizationId} {
+      // Secure list query and read
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // client must secure queries, but safe since organization ID exists
+      allow create: if isVerified() && isValidId(organizationId) && isValidOrganization(incoming()) &&
+                    incoming().createdAt is string && incoming().createdAt.size() <= 64 &&
+                    existsAfter(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid));
+      allow update: if isVerified() && isValidId(organizationId) && isOrgAdmin(organizationId) && isValidOrganization(incoming()) &&
+                    incoming().createdBy == existing().createdBy && incoming().createdAt == existing().createdAt;
+      allow delete: if isVerified() && isValidId(organizationId) && isOrgAdmin(organizationId);
+    }
+
+    // --- Members Subcollection ---
+    match /organizations/{organizationId}/members/{memberId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isVerified() && isValidId(organizationId) && isValidId(memberId) && isValidMember(incoming()) && (
+        // Creator adds themselves as primary Admin during batch create
+        (memberId == request.auth.uid && incoming().role == 'admin' && existsAfter(/databases/$(database)/documents/organizations/$(organizationId))) ||
+        // User adding/claiming themselves as a member
+        (memberId == request.auth.uid && incoming().userId == request.auth.uid) ||
+        // Existing Admin invites new team members
+        (isOrgAdmin(organizationId))
+      );
+      allow update: if isVerified() && isValidId(organizationId) && isValidId(memberId) && isValidMember(incoming()) && (
+        // Only Admin can update other members, or user updates their own profile
+        isOrgAdmin(organizationId) || (memberId == request.auth.uid && incoming().userId == request.auth.uid)
+      );
+      allow delete: if isVerified() && isValidId(organizationId) && isValidId(memberId) && (
+        // Admins can remove members, or users can self-leave, or user deletes their own pending/slug invite record
+        isOrgAdmin(organizationId) || 
+        memberId == request.auth.uid || 
+        (existing().email is string && existing().email == request.auth.token.email) ||
+        (existing().userId is string && existing().userId == request.auth.uid)
+      );
+    }
+
+    // --- Transactions Subcollection ---
+    match /organizations/{organizationId}/transactions/{transactionId} {
+      allow get, list: if isOrgMember(organizationId);
+      allow create: if isVerified() && isValidId(organizationId) && isValidId(transactionId) && isOrgMember(organizationId) &&
+                    isValidTransaction(incoming()) && incoming().createdAt is string && incoming().createdAt.size() <= 64;
+      allow update: if isVerified() && isValidId(organizationId) && isValidId(transactionId) && isOrgMember(organizationId) &&
+                    isValidTransaction(incoming()) && incoming().createdAt == existing().createdAt;
+      allow delete: if isVerified() && isValidId(organizationId) && isValidId(transactionId) && isOrgMember(organizationId) && (
+        existing().createdBy == request.auth.uid || isOrgAdmin(organizationId)
+      );
+    }
+
+    // --- Collection Group rule for Membership Discovery ---
+    match /{path=**}/members/{memberId} {
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        resource.data.email == request.auth.token.email
+      );
+    }
+  }
+}

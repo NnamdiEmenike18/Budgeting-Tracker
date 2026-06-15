@@ -1,0 +1,107 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about a user.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "theme": { "type": "string" },
+        "bannerColor": { "type": "string" },
+        "bio": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "An organization tracking independent budget data.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "colorTheme": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "type": { "type": "string", "enum": ["personal", "team"] }
+      },
+      "required": ["id", "name", "colorTheme", "createdBy"]
+    },
+    "Member": {
+      "title": "Organization Member",
+      "description": "A teammate/officer collaborating on an organization.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "member"] },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "email", "role"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A monetary record of income or expense.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "category": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "description": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "amount", "type", "category", "date", "createdBy", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Inbox notification alerting collaborators of budget events or invitations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["budget_change", "invite", "info"] },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "orgId": { "type": "string" },
+        "orgName": { "type": "string" },
+        "invitedByEmail": { "type": "string" },
+        "invitedByName": { "type": "string" },
+        "inviteRole": { "type": "string" },
+        "status": { "type": "string", "enum": ["unread", "read", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "type", "title", "message", "orgId", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Workspace alerts and invitations"
+    },
+    "/organizations/{organizationId}": {
+      "schema": "Organization",
+      "description": "Organizations"
+    },
+    "/organizations/{organizationId}/members/{memberId}": {
+      "schema": "Member",
+      "description": "Collaboration members in an organization"
+    },
+    "/organizations/{organizationId}/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Budget transactions for an organization"
+    }
+  }
+}
